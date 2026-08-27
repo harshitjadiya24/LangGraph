@@ -224,26 +224,29 @@ if user_input:
     with st.chat_message("user", avatar="🧑‍💻"):
         st.markdown(user_input)
 
-    # 2. Invoke LangGraph with checkpointer thread configuration
+    # 2. Invoke LangGraph with checkpointer thread configuration and real-time streaming
     with st.chat_message("assistant", avatar="🤖"):
-        with st.spinner("Thinking..."):
-            try:
-                config = {"configurable": {"thread_id": current_thread_id}}
-                
-                # Stream or invoke through LangGraph
-                output_state = chatbot.invoke(
+        try:
+            config = {"configurable": {"thread_id": current_thread_id}}
+            
+            def stream_generator():
+                for chunk, metadata in chatbot.stream(
                     {"messages": [HumanMessage(content=user_input)]},
-                    config=config
-                )
-                
-                # Extract latest AI message
-                latest_msg = output_state["messages"][-1]
-                response_text = latest_msg.content if hasattr(latest_msg, "content") else str(latest_msg)
-                
-                st.markdown(response_text)
+                    config=config,
+                    stream_mode="messages"
+                ):
+                    if hasattr(chunk, "content") and chunk.content:
+                        yield chunk.content
+                    elif isinstance(chunk, str):
+                        yield chunk
+            
+            # Stream tokens in real time to the UI
+            response_text = st.write_stream(stream_generator())
+            
+            if response_text:
                 active_messages.append({"role": "assistant", "content": response_text})
 
-            except Exception as e:
-                error_msg = f"⚠️ **Error invoking graph:** `{str(e)}`"
-                st.error(error_msg)
-                active_messages.append({"role": "assistant", "content": error_msg})
+        except Exception as e:
+            error_msg = f"⚠️ **Error streaming from graph:** `{str(e)}`"
+            st.error(error_msg)
+            active_messages.append({"role": "assistant", "content": error_msg})
