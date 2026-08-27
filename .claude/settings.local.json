@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/Users/harshitjadiya/Desktop/LangGraph/myenv/bin/python *)",
+      "mcp__ide__executeCode",
+      "Bash(./myenv/bin/python *)",
+      "Bash(./myenv/bin/pip list *)"
+    ]
+  }
+}
