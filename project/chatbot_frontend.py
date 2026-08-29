@@ -1,11 +1,11 @@
 import streamlit as st
 import uuid
 from langchain_core.messages import HumanMessage, AIMessage
-from chatbot_backend import chatbot
+from database_backend import chatbot, retrieve_all_thread, get_thread_messages
 
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="AI Chatbot • LangGraph",
+    page_title="AI Chatbot • LangGraph + SQLite",
     page_icon="🤖",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -105,60 +105,74 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- Session State Management ---
-if "threads" not in st.session_state:
-    initial_id = "Thread 1"
-    st.session_state.threads = {initial_id: []}
-    st.session_state.current_thread = initial_id
 
-if "current_thread" not in st.session_state:
-    st.session_state.current_thread = list(st.session_state.threads.keys())[0]
+# --- Load Threads from SQLite Database ---
+db_threads = retrieve_all_thread()
+
+if "thread_list" not in st.session_state:
+    if db_threads:
+        st.session_state.thread_list = sorted(list(db_threads))
+        st.session_state.current_thread = st.session_state.thread_list[0]
+    else:
+        st.session_state.thread_list = ["Thread 1"]
+        st.session_state.current_thread = "Thread 1"
+
+if "current_thread" not in st.session_state or st.session_state.current_thread not in st.session_state.thread_list:
+    st.session_state.current_thread = st.session_state.thread_list[0]
 
 current_thread_id = st.session_state.current_thread
 
+
 # --- Sidebar ---
 with st.sidebar:
-    st.markdown("### 💬 Chat Sessions")
+    st.markdown("### 💬 Chat Sessions (SQLite)")
     
     if st.button("➕ New Conversation", use_container_width=True, type="primary"):
-        new_thread_num = len(st.session_state.threads) + 1
+        new_thread_num = len(st.session_state.thread_list) + 1
         new_thread_name = f"Thread {new_thread_num}"
-        st.session_state.threads[new_thread_name] = []
+        while new_thread_name in st.session_state.thread_list:
+            new_thread_num += 1
+            new_thread_name = f"Thread {new_thread_num}"
+        st.session_state.thread_list.append(new_thread_name)
         st.session_state.current_thread = new_thread_name
         st.rerun()
 
     st.markdown("---")
-    st.markdown("#### History Threads")
+    st.markdown("#### Saved Threads")
 
-    for thread_name in list(st.session_state.threads.keys()):
+    for thread_name in list(st.session_state.thread_list):
         col1, col2 = st.columns([4, 1])
         is_active = thread_name == st.session_state.current_thread
         
         with col1:
-            btn_label = f"✨ {thread_name}" if is_active else f"💭 {thread_name}"
+            btn_label = f"✨ {thread_name}" if is_active else f"💾 {thread_name}"
             if st.button(btn_label, key=f"select_{thread_name}", use_container_width=True, disabled=is_active):
                 st.session_state.current_thread = thread_name
                 st.rerun()
                 
         with col2:
-            if len(st.session_state.threads) > 1:
-                if st.button("🗑️", key=f"del_{thread_name}", help=f"Delete {thread_name}"):
-                    del st.session_state.threads[thread_name]
-                    st.session_state.current_thread = list(st.session_state.threads.keys())[0]
+            if len(st.session_state.thread_list) > 1:
+                if st.button("🗑️", key=f"del_{thread_name}", help=f"Remove {thread_name} from list"):
+                    st.session_state.thread_list.remove(thread_name)
+                    st.session_state.current_thread = st.session_state.thread_list[0]
                     st.rerun()
 
     st.markdown("---")
-    st.markdown("### ⚙️ Graph Engine")
+    st.markdown("### ⚙️ Database Engine")
     st.markdown("""
-    - **Framework:** `LangGraph`
-    - **LLM:** `Ollama / Qwen3 1.7B`
-    - **Persistence:** `MemorySaver`
+    - **Backend:** `database_backend.py`
+    - **Checkpointer:** `SqliteSaver (chatbot.db)`
+    - **LLM:** `Ollama (qwen3:1.7b)`
     - **Active Thread ID:**  
       `{}`
     """.format(current_thread_id))
 
-    if st.button("🧹 Clear Current Thread", use_container_width=True):
-        st.session_state.threads[current_thread_id] = []
+    if st.button("🔄 Sync with Database", use_container_width=True):
+        updated_threads = retrieve_all_thread()
+        if updated_threads:
+            for t in updated_threads:
+                if t not in st.session_state.thread_list:
+                    st.session_state.thread_list.append(t)
         st.rerun()
 
 
@@ -166,9 +180,9 @@ with st.sidebar:
 st.markdown(f"""
 <div class="header-container">
     <div>
-        <h1 class="header-title">🤖 LangGraph AI Assistant</h1>
+        <h1 class="header-title">🤖 LangGraph SQLite Chatbot</h1>
         <p style="margin: 4px 0 0 0; color: #94A3B8; font-size: 0.85rem;">
-            Stateful multi-turn conversation with memory persistence
+            Persistent multi-turn conversation backed by SQLite storage (chatbot.db)
         </p>
     </div>
     <div class="badge-pill">
@@ -179,16 +193,24 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 
-# --- Quick Starter Prompts (if empty chat) ---
-active_messages = st.session_state.threads[current_thread_id]
+# --- Load Messages from SQLite for Active Thread ---
+raw_messages = get_thread_messages(current_thread_id)
 
-if not active_messages:
+display_messages = []
+for msg in raw_messages:
+    role = "user" if isinstance(msg, HumanMessage) or getattr(msg, "type", "") == "human" else "assistant"
+    content = msg.content if hasattr(msg, "content") else str(msg)
+    display_messages.append({"role": role, "content": content})
+
+
+# --- Quick Starter Prompts (if empty chat) ---
+if not display_messages:
     st.markdown("<p style='color: #64748B; font-size: 0.9rem; margin-bottom: 6px;'>Try starting with one of these:</p>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns(3)
     
     starter_prompts = [
         ("👋 Introduce Yourself", "Hello! Who are you and what can you do?"),
-        ("🧠 Test Memory", "Hi, my name is Alex. Remember this name for later!"),
+        ("🧠 Test SQLite Memory", "Hi, my favorite color is Blue. Save this in database!"),
         ("⚡ Coding Help", "Write a simple Python function to reverse a string.")
     ]
     
@@ -204,27 +226,27 @@ if not active_messages:
             selected_prompt = starter_prompts[2][1]
 
     if selected_prompt:
-        active_messages.append({"role": "user", "content": selected_prompt})
+        config = {"configurable": {"thread_id": current_thread_id}}
+        chatbot.invoke({"messages": [HumanMessage(content=selected_prompt)]}, config=config)
         st.rerun()
 
 
-# --- Display Chat Messages ---
-for msg in active_messages:
+# --- Display Existing Chat Messages ---
+for msg in display_messages:
     avatar = "🧑‍💻" if msg["role"] == "user" else "🤖"
     with st.chat_message(msg["role"], avatar=avatar):
         st.markdown(msg["content"])
 
 
-# --- Chat Input & Execution ---
+# --- Chat Input & Execution with Streaming ---
 user_input = st.chat_input("Type your message here...")
 
 if user_input:
-    # 1. Append & Display user message
-    active_messages.append({"role": "user", "content": user_input})
+    # 1. Display user message immediately
     with st.chat_message("user", avatar="🧑‍💻"):
         st.markdown(user_input)
 
-    # 2. Invoke LangGraph with checkpointer thread configuration and real-time streaming
+    # 2. Invoke LangGraph with SQLite thread checkpointer and stream tokens
     with st.chat_message("assistant", avatar="🤖"):
         try:
             config = {"configurable": {"thread_id": current_thread_id}}
@@ -240,13 +262,12 @@ if user_input:
                     elif isinstance(chunk, str):
                         yield chunk
             
-            # Stream tokens in real time to the UI
+            # Stream tokens in real time
             response_text = st.write_stream(stream_generator())
             
-            if response_text:
-                active_messages.append({"role": "assistant", "content": response_text})
+            # Refresh to sync the state with SQLite
+            st.rerun()
 
         except Exception as e:
             error_msg = f"⚠️ **Error streaming from graph:** `{str(e)}`"
             st.error(error_msg)
-            active_messages.append({"role": "assistant", "content": error_msg})
