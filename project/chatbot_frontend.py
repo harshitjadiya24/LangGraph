@@ -249,12 +249,18 @@ if user_input:
     # 2. Invoke LangGraph with SQLite thread checkpointer and stream tokens
     with st.chat_message("assistant", avatar="🤖"):
         try:
-            config = {"configurable": {"thread_id": current_thread_id}}
+            CONFIG = {
+        "configurable": {"thread_id": st.session_state["thread_id"]},
+        "metadata": {
+            "thread_id": st.session_state["thread_id"]
+        },
+        "run_name": "chat_turn",
+    }
             
             def stream_generator():
                 for chunk, metadata in chatbot.stream(
                     {"messages": [HumanMessage(content=user_input)]},
-                    config=config,
+                    config=CONFIG,
                     stream_mode="messages"
                 ):
                     if hasattr(chunk, "content") and chunk.content:
