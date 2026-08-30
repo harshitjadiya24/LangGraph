@@ -1,4 +1,7 @@
+from langgraph.prebuilt import tool_node
+import os
 import sqlite3
+import requests
 from langgraph.graph import StateGraph
 from dotenv import load_dotenv
 # pyrefly: ignore [missing-import]
@@ -9,6 +12,9 @@ from typing import Annotated
 from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.prebuilt import tools_condition, ToolNode
+from langchain_community.tools import DuckDuckGoSearchRun
+from langchain_core.tools import tool
 
 class Chat(TypedDict):
 
@@ -18,19 +24,17 @@ model = ChatOllama(
     model = "qwen3:1.7b"
 )
 
+conn = sqlite3.connect(database='chatbot.db', check_same_thread=False)
+
 def chat_node(state: Chat):
 
     response = model.invoke(state['messages'])
     return {'messages': [response]}
 
-conn = sqlite3.connect(database='chatbot.db', check_same_thread=False)
-
-
 checkpointer = SqliteSaver(conn=conn)
 graph = StateGraph(Chat)
 
 graph.add_node("chat_node", chat_node)
-
 graph.add_edge(START, "chat_node")
 graph.add_edge("chat_node", END)
 
